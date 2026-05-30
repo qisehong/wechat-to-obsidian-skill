@@ -22,30 +22,30 @@ Any agent that follows the [Agent Skills specification](https://agentskills.io):
 ### Option 1: Claude Code Marketplace (easiest)
 
 ```
-/plugin marketplace add xuhaitao/wechat-to-obsidian-skill
+/plugin marketplace add qisehong/wechat-to-obsidian-skill
 /plugin install wechat-to-obsidian@wechat-to-obsidian-skill
 ```
 
 ### Option 2: npx skills
 
 ```bash
-npx skills add https://github.com/xuhaitao/wechat-to-obsidian-skill
+npx skills add https://github.com/qisehong/wechat-to-obsidian-skill
 ```
 
 ### Option 3: Manual Clone
 
 ```bash
 # Claude Code / Claude Agent SDK
-git clone https://github.com/xuhaitao/wechat-to-obsidian-skill.git ~/.claude/skills/wechat-to-obsidian
+git clone https://github.com/qisehong/wechat-to-obsidian-skill.git ~/.claude/skills/wechat-to-obsidian
 
 # Hermes Agent
-git clone https://github.com/xuhaitao/wechat-to-obsidian-skill.git ~/.hermes/skills/wechat-to-obsidian
+git clone https://github.com/qisehong/wechat-to-obsidian-skill.git ~/.hermes/skills/wechat-to-obsidian
 
 # OpenClaw
-git clone https://github.com/xuhaitao/wechat-to-obsidian-skill.git ~/.openclaw/skills/wechat-to-obsidian
+git clone https://github.com/qisehong/wechat-to-obsidian-skill.git ~/.openclaw/skills/wechat-to-obsidian
 
 # OpenCode
-git clone https://github.com/xuhaitao/wechat-to-obsidian-skill.git ~/.opencode/skills/wechat-to-obsidian-skill
+git clone https://github.com/qisehong/wechat-to-obsidian-skill.git ~/.opencode/skills/wechat-to-obsidian-skill
 ```
 
 ## Prerequisites

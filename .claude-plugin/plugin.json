@@ -3,10 +3,10 @@
   "description": "Save WeChat articles (mp.weixin.qq.com) to Obsidian vault — one command downloads, extracts, converts to Markdown, and saves.",
   "version": "0.1.0",
   "author": {
-    "name": "xuhaitao"
+    "name": "qisehong"
   },
-  "homepage": "https://github.com/xuhaitao/wechat-to-obsidian-skill",
-  "repository": "https://github.com/xuhaitao/wechat-to-obsidian-skill",
+  "homepage": "https://github.com/qisehong/wechat-to-obsidian-skill",
+  "repository": "https://github.com/qisehong/wechat-to-obsidian-skill",
   "license": "MIT",
   "keywords": ["wechat", "obsidian", "markdown", "article", "vault"],
   "skills": ["skills/wechat-to-obsidian"]

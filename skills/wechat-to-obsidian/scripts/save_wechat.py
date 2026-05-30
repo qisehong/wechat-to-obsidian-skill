@@ -375,7 +375,7 @@ def run_check(vault_path, source_label):
 def main():
     parser = argparse.ArgumentParser(
         description="Save a WeChat article to an Obsidian vault.",
-        epilog="Configuration: https://github.com/xuhaitao/wechat-to-obsidian-skill",
+        epilog="Configuration: https://github.com/qisehong/wechat-to-obsidian-skill",
     )
     parser.add_argument(
         "url",
