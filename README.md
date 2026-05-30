@@ -3,6 +3,8 @@
 Save WeChat official account articles to your Obsidian vault — one command
 downloads, extracts metadata, converts to Markdown, and writes the note.
 
+> 中文用户请参阅 **[中文 README](README.zh-CN.md)** | Chinese users see **[README.zh-CN.md](README.zh-CN.md)**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-compatible-green)](https://agentskills.io)
 
