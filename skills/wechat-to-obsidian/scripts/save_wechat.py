@@ -14,6 +14,7 @@ Configuration:
 
 import re
 import html as html_mod
+from html.parser import HTMLParser
 import sys
 import os
 import subprocess
@@ -22,13 +23,58 @@ import argparse
 from pathlib import Path
 from configparser import ConfigParser
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 )
 CONFIG_FILE = Path.home() / ".wechat-to-obsidian.conf"
+
+
+# ---------------------------------------------------------------------------
+# HTMLParser-based js_content extractor
+# ---------------------------------------------------------------------------
+
+class JsContentExtractor(HTMLParser):
+    """Extract inner HTML of id="js_content" div using depth tracking.
+
+    WeChat HTML often has attributes spanning multiple lines, which causes
+    regex-based extraction to fail silently. This parser tracks tag depth
+    and reliably captures the full body regardless of attribute formatting.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.in_content = False
+        self.depth = 0
+        self.capture = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs_d = dict(attrs)
+        if tag == "div" and attrs_d.get("id") == "js_content":
+            self.in_content = True
+            self.depth = 1
+            return
+        if self.in_content:
+            if tag == "div":
+                self.depth += 1
+            self.capture.append(self.get_starttag_text() or f"<{tag}>")
+
+    def handle_endtag(self, tag):
+        if self.in_content:
+            if tag == "div":
+                self.depth -= 1
+                if self.depth == 0:
+                    self.in_content = False
+                    return
+            self.capture.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self.in_content:
+            self.capture.append(data)
+
+    def get_html(self):
+        return "".join(self.capture)
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +224,20 @@ def extract_wechat_metadata(html_path):
     if m:
         date = m.group(1).strip().split(" ")[0]
 
-    # Body HTML
-    m = re.search(
-        r'id="js_content"[^>]*>(.+?)(?:<script\s|</div>\s*<script)',
-        content,
-        re.DOTALL,
-    )
-    body_html = m.group(1).strip() if m else ""
+    # Body HTML — use HTMLParser depth tracking (regex fails when
+    # WeChat HTML attributes span multiple lines)
+    parser = JsContentExtractor()
+    parser.feed(content)
+    body_html = parser.get_html()
+
+    if not body_html:
+        # Fallback: try regex as last resort
+        m = re.search(
+            r'id="js_content"[^>]*>(.+?)(?:<script\s|</div>\s*<script)',
+            content,
+            re.DOTALL,
+        )
+        body_html = m.group(1).strip() if m else ""
 
     print(f"   Title:    {title[:60]}{'...' if len(title) > 60 else ''}")
     print(f"   Account:  {account}")
@@ -211,7 +264,7 @@ def wechat_html_to_markdown(raw_html):
     md = re.sub(r"</span>", "", md)
 
     # Headings
-    for tag, prefix in [("h1", "#"), ("h2", "##"), ("h3", "###"), ("h4", "####")]:
+    for tag, prefix in [("h1", "#"), ("h2", "##"), ("h3", "###"), ("h4", "####"), ("h5", "#####"), ("h6", "######")]:
         md = re.sub(rf"<{tag}[^>]*>", f"{prefix} ", md)
         md = re.sub(rf"</{tag}>", "\n\n", md)
 
@@ -219,7 +272,9 @@ def wechat_html_to_markdown(raw_html):
     md = re.sub(r"<strong[^>]*>(.*?)</strong>", r"**\1**", md)
     md = re.sub(r"<b[^>]*>(.*?)</b>", r"**\1**", md)
     md = re.sub(r"<em[^>]*>(.*?)</em>", r"*\1*", md)
+    md = re.sub(r"<i[^>]*>(.*?)</i>", r"*\1*", md)
     md = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", md)
+    md = re.sub(r"<pre[^>]*>(.*?)</pre>", r"\n```\n\1\n```\n", md, flags=re.DOTALL)
 
     # Links
     md = re.sub(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', r"[\2](\1)", md)
@@ -251,6 +306,19 @@ def wechat_html_to_markdown(raw_html):
 
     # Clean remaining HTML tags
     md = re.sub(r"<[^>]+>", "", md)
+
+    # Decode HTML entities — explicit common ones + html.unescape for the rest
+    replacements = {
+        "&nbsp;": " ", "&lt;": "<", "&gt;": ">",
+        "&amp;": "&", "&quot;": '"', "&apos;": "'",
+        "&#39;": "'", "&#x27;": "'", "&#34;": '"',
+        "&#8217;": "'", "&#8220;": '"', "&#8221;": '"',
+        "&#8230;": "…", "&#x2F;": "/",
+        "&#60;": "<", "&#62;": ">",
+        "&#40;": "(", "&#41;": ")",
+    }
+    for k, v in replacements.items():
+        md = md.replace(k, v)
     md = html_mod.unescape(md)
 
     # Whitespace normalization

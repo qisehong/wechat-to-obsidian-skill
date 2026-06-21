@@ -33,11 +33,13 @@ See `references/configuration.md` for detailed setup instructions.
 
 ## What the Script Does
 
-1. Downloads the article HTML via curl
+1. Downloads the article HTML via curl (iOS Safari User-Agent for WeChat compatibility)
 2. Extracts title, account name, and publish date from the page metadata
-3. Converts the body HTML to Markdown (preserves images, links, formatting)
-4. Writes a `.md` file with Obsidian frontmatter to the vault inbox
-5. Removes temporary files
+3. Extracts the article body using HTMLParser depth tracking (not regex — WeChat HTML
+   attributes often span multiple lines, which causes regex to fail silently)
+4. Converts the body HTML to Markdown (preserves images, links, headings, code blocks)
+5. Writes a `.md` file with Obsidian frontmatter to the vault inbox
+6. Removes temporary files
 
 ## Output Format
 
@@ -104,7 +106,7 @@ instructions.
 | Issue | Likely Cause | Fix |
 |---|---|---|
 | "下载内容过小" | WeChat anti-scraping | Retry once; the second attempt usually succeeds |
-| Empty body | Page structure changed | Check if the `js_content` regex needs updating |
+| Empty body | Page structure changed | Uses HTMLParser with regex fallback; check page source |
 | Garbled title | HTML entities | `html.unescape()` is applied automatically |
 | Python not found | Missing install | Install Python 3.8+ from python.org |
 | curl not found | Missing tool | Install curl or use the package manager for your OS |
