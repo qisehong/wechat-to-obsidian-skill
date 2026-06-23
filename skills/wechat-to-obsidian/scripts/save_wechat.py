@@ -23,7 +23,7 @@ import argparse
 from pathlib import Path
 from configparser import ConfigParser
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
@@ -364,6 +364,62 @@ def save_to_vault(title, author, date, source_url, markdown_body, vault_inbox):
 
 
 # ---------------------------------------------------------------------------
+# Git auto-sync
+# ---------------------------------------------------------------------------
+
+def git_sync(filepath, vault_inbox):
+    """Commit and push the saved file to the vault's Git remote."""
+    print("[git-sync] Committing and pushing...")
+    vault_root = vault_inbox
+    # Walk up to find the .git directory (vault inbox may be a subdirectory)
+    for _ in range(5):
+        if (vault_root / ".git").exists():
+            break
+        vault_root = vault_root.parent
+
+    if not (vault_root / ".git").exists():
+        print("   ⚠ No .git directory found in vault; skipping sync.")
+        return
+
+    git = lambda *args: subprocess.run(
+        ["git", "-C", str(vault_root)] + list(args),
+        capture_output=True, text=True,
+    )
+
+    # Pull latest
+    result = git("pull", "--rebase")
+    if result.returncode != 0:
+        print(f"   ⚠ git pull failed: {result.stderr.strip()}")
+        # Continue anyway — our file is local
+
+    # Add and commit
+    rel_path = filepath.relative_to(vault_root)
+    result = git("add", str(rel_path))
+    if result.returncode != 0:
+        print(f"   ⚠ git add failed: {result.stderr.strip()}")
+        return
+
+    safe_title = filepath.stem
+    result = git("commit", "-m", f"Add: {safe_title}")
+    if result.returncode != 0:
+        # "nothing to commit" is not an error
+        if "nothing to commit" in (result.stdout + result.stderr):
+            print("   Nothing to commit (file unchanged)")
+        else:
+            print(f"   ⚠ git commit failed: {result.stderr.strip()}")
+        return
+    print(f"   Committed: {result.stdout.strip().split(chr(10))[0]}")
+
+    # Push
+    result = git("push")
+    if result.returncode != 0:
+        print(f"   ⚠ git push failed: {result.stderr.strip()}")
+        print("   (File saved locally; push manually when ready)")
+    else:
+        print("   Pushed to remote")
+
+
+# ---------------------------------------------------------------------------
 # Fallback: defuddle for non-WeChat URLs
 # ---------------------------------------------------------------------------
 
@@ -461,7 +517,13 @@ def main():
         "--check", action="store_true",
         help="Check configuration and exit (no download)",
     )
+    parser.add_argument(
+        "--git-sync", action="store_true",
+        help="After saving, commit and push to the vault's Git remote",
+    )
     args = parser.parse_args()
+
+    git_sync_enabled = args.git_sync
 
     # --check mode
     if args.check:
@@ -515,8 +577,13 @@ def main():
         # Step 3: Save
         filepath = save_to_vault(title, author, date, url, markdown_body, vault_path)
 
-        # Step 4: Cleanup
-        print("[4/4] Cleaning up...")
+        # Step 4: Git sync (if enabled)
+        if git_sync_enabled:
+            git_sync(filepath, vault_path)
+
+        # Step 5: Cleanup
+        label = "5/5" if git_sync_enabled else "4/4"
+        print(f"[{label}] Cleaning up...")
         tmp_html.unlink(missing_ok=True)
 
         print(f"\n[Done] {filepath.name}")
