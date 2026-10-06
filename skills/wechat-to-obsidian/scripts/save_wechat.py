@@ -23,12 +23,14 @@ import argparse
 from pathlib import Path
 from configparser import ConfigParser
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 )
 CONFIG_FILE = Path.home() / ".wechat-to-obsidian.conf"
+ATTACHMENT_DIR_NAME = "attachments"
+WECHAT_IMAGE_HOSTS = ("mmbiz.qpic.cn",)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +108,23 @@ def resolve_vault_path(cli_value=None):
     return None, "none"
 
 
+def ask(prompt):
+    """input() that exits cleanly when no interactive stdin is available."""
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nNo interactive input available.")
+        raise SystemExit(1)
+
+
+def is_interactive():
+    """True when stdin and stdout are attached to a terminal."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def interactive_config():
     """Ask user for vault path and offer to persist it."""
     print("No vault inbox configured.")
@@ -114,14 +133,14 @@ def interactive_config():
     print("  1. Environment variable: OBSIDIAN_VAULT_INBOX")
     print("  2. Config file:          ~/.wechat-to-obsidian.conf")
     print()
-    path_str = input("Enter your Obsidian vault Inbox path: ").strip()
+    path_str = ask("Enter your Obsidian vault Inbox path: ")
     if not path_str:
         print("No path entered. Exiting.")
         sys.exit(0)
 
     vault_path = Path(path_str).expanduser()
     if not vault_path.exists():
-        create = input(f"Directory '{vault_path}' does not exist. Create it? [Y/n]: ").strip().lower()
+        create = ask(f"Directory '{vault_path}' does not exist. Create it? [Y/n]: ").lower()
         if create in ("", "y", "yes"):
             vault_path.mkdir(parents=True, exist_ok=True)
             print(f"Created: {vault_path}")
@@ -129,7 +148,7 @@ def interactive_config():
             print("Exiting.")
             sys.exit(0)
 
-    save = input("Save this path to ~/.wechat-to-obsidian.conf for future use? [Y/n]: ").strip().lower()
+    save = ask("Save this path to ~/.wechat-to-obsidian.conf for future use? [Y/n]: ").lower()
     if save in ("", "y", "yes"):
         cp = ConfigParser()
         cp["obsidian"] = {"vault_inbox": str(vault_path)}
@@ -147,7 +166,7 @@ def interactive_config():
 
 def download_article(url, dest_path):
     """Download article HTML via curl. Returns True on success."""
-    print("[1/4] Downloading article...")
+    print("[1/5] Downloading article...")
     result = subprocess.run(
         [
             "curl", "-s", "--max-time", "60", "-L",
@@ -183,7 +202,7 @@ def download_article(url, dest_path):
 
 def extract_wechat_metadata(html_path):
     """Extract title, account name, date, and body HTML from WeChat page."""
-    print("[2/4] Extracting metadata...")
+    print("[2/5] Extracting metadata...")
 
     with open(html_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -328,14 +347,129 @@ def wechat_html_to_markdown(raw_html):
 
 
 # ---------------------------------------------------------------------------
+# Image localization
+# ---------------------------------------------------------------------------
+
+def safe_name(text):
+    """Make a string safe to use in a file name on Windows/macOS/Linux."""
+    return re.sub(r'[<>:"/\\|?*]', "_", text)
+
+
+def find_vault_root(vault_inbox):
+    """Walk up from vault_inbox to the Obsidian vault root (contains .obsidian).
+
+    Returns the vault root Path, or None if not found within 5 levels.
+    """
+    current = Path(vault_inbox).resolve()
+    for _ in range(5):
+        if (current / ".obsidian").is_dir():
+            return current
+        if current.parent == current:
+            return None
+        current = current.parent
+    return None
+
+
+def extract_image_urls(markdown_body):
+    """Return image URLs in order of first appearance."""
+    return re.findall(r"!\[\]\((https?://[^)\s]+)\)", markdown_body)
+
+
+def is_wechat_image(url):
+    """True for WeChat CDN images (the ones subject to hotlink protection)."""
+    return any(host in url for host in WECHAT_IMAGE_HOSTS)
+
+
+def image_extension(url):
+    """Guess the file extension from the wx_fmt query parameter or URL path."""
+    m = re.search(r"[?&]wx_fmt=(\w+)", url)
+    if m:
+        fmt = m.group(1).lower()
+        if fmt == "jpeg":
+            return "jpg"
+        if fmt in ("png", "gif", "webp", "svg", "bmp"):
+            return fmt
+    m = re.search(r"\.(jpe?g|png|gif|webp|svg|bmp)(?:[?#]|$)", url, re.IGNORECASE)
+    if m:
+        return m.group(1).lower().replace("jpeg", "jpg")
+    return "jpg"
+
+
+def download_image(url, dest_path):
+    """Download one image via curl. Returns True on success."""
+    result = subprocess.run(
+        [
+            "curl", "-s", "--fail", "--max-time", "30", "-L",
+            "--retry", "2", "--retry-delay", "1",
+            "-A", USER_AGENT,
+            "-o", str(dest_path),
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    ok = result.returncode == 0 and dest_path.exists() and dest_path.stat().st_size > 0
+    if not ok:
+        dest_path.unlink(missing_ok=True)
+    return ok
+
+
+def localize_images(markdown_body, vault_inbox, title, date):
+    """Download WeChat images into the vault and rewrite the URLs.
+
+    Images go to <vault-root>/attachments when an Obsidian vault root
+    (.obsidian directory) is found above the inbox, otherwise to
+    <inbox>/attachments. URLs are rewritten to paths relative to the note.
+    Failed downloads keep their remote URL. Returns
+    (markdown, (downloaded, cached, failed)).
+    """
+    urls = [u for u in extract_image_urls(markdown_body) if is_wechat_image(u)]
+    if not urls:
+        print("[3/5] Localizing images: none found, skipping")
+        return markdown_body, (0, 0, 0)
+
+    base = Path(vault_inbox).resolve()
+    vault_root = find_vault_root(base)
+    attach_dir = (vault_root / ATTACHMENT_DIR_NAME) if vault_root else base / ATTACHMENT_DIR_NAME
+    attach_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = safe_name(title)[:30].strip("_ ") or "wechat"
+    date_part = safe_name(date).strip("_ ") or "unknown-date"
+
+    print(f"[3/5] Localizing images ({len(urls)} unique)...")
+    mapping = {}
+    downloaded = cached = failed = 0
+    for i, url in enumerate(dict.fromkeys(urls), 1):
+        filename = f"{date_part}-{slug}-img{i}.{image_extension(url)}"
+        dest = attach_dir / filename
+        if dest.exists() and dest.stat().st_size > 0:
+            cached += 1
+        elif download_image(url, dest):
+            downloaded += 1
+        else:
+            failed += 1
+            print(f"   ⚠ download failed (kept remote): {url[:80]}")
+            continue
+        mapping[url] = os.path.relpath(dest, base).replace(os.sep, "/")
+
+    for url, rel in mapping.items():
+        markdown_body = markdown_body.replace(url, rel)
+
+    print(f"   Images:     {downloaded} downloaded, {cached} cached, {failed} failed")
+    print(f"   Saved to:   {attach_dir}")
+    return markdown_body, (downloaded, cached, failed)
+
+
+# ---------------------------------------------------------------------------
 # Save to vault
 # ---------------------------------------------------------------------------
 
 def save_to_vault(title, author, date, source_url, markdown_body, vault_inbox):
     """Write the Markdown file into the vault inbox directory."""
-    print("[3/4] Writing to vault...")
+    print("[4/5] Writing to vault...")
 
-    safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
+    safe_title = safe_name(title)
     filename = f"{date}-{safe_title}.md"
     filepath = vault_inbox / filename
 
@@ -521,6 +655,16 @@ def main():
         "--git-sync", action="store_true",
         help="After saving, commit and push to the vault's Git remote",
     )
+    parser.add_argument(
+        "--no-local-images", action="store_true",
+        help="Keep WeChat images as remote URLs instead of downloading them "
+             "into the vault attachments folder",
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="Never prompt for input; fail with an error if the vault path "
+             "is not configured",
+    )
     args = parser.parse_args()
 
     git_sync_enabled = args.git_sync
@@ -542,6 +686,16 @@ def main():
     # Resolve vault path
     vault_path, source = resolve_vault_path(args.vault_path)
     if vault_path is None:
+        if args.non_interactive or not is_interactive():
+            print("[Error] No vault inbox configured and interactive prompting is unavailable.")
+            print()
+            print("Set the vault path with one of:")
+            print('  1. CLI argument:         --vault-path "D:/MyVault/Inbox"')
+            print("  2. Environment variable: OBSIDIAN_VAULT_INBOX")
+            print("  3. Config file:          ~/.wechat-to-obsidian.conf")
+            print("     [obsidian]")
+            print("     vault_inbox = D:/MyVault/Inbox")
+            sys.exit(1)
         vault_path = interactive_config()
         source = "interactive setup"
 
@@ -549,8 +703,10 @@ def main():
     print(f"URL: {url}")
     print()
 
-    # Temporary file for downloaded HTML
-    tmp_html = Path(tempfile.gettempdir()) / "wechat_article.html"
+    # Temporary file for downloaded HTML (unique per run)
+    fd, tmp_name = tempfile.mkstemp(prefix="wechat_article_", suffix=".html")
+    os.close(fd)
+    tmp_html = Path(tmp_name)
 
     try:
         # Step 1: Download
@@ -563,6 +719,10 @@ def main():
             if not body_html or len(body_html) < 50:
                 raise RuntimeError("Body extraction failed or content too short")
             markdown_body = wechat_html_to_markdown(body_html)
+
+            # Step 3: Localize images (download into the vault, rewrite URLs)
+            if not args.no_local_images:
+                markdown_body, _ = localize_images(markdown_body, vault_path, title, date)
         else:
             # Non-WeChat: try defuddle first
             try:
@@ -574,26 +734,23 @@ def main():
                 print(f"\n[Done] {filepath.name}")
                 return
 
-        # Step 3: Save
+        # Step 4: Save
         filepath = save_to_vault(title, author, date, url, markdown_body, vault_path)
 
-        # Step 4: Git sync (if enabled)
+        # Optional: Git sync
         if git_sync_enabled:
             git_sync(filepath, vault_path)
 
         # Step 5: Cleanup
-        label = "5/5" if git_sync_enabled else "4/4"
-        print(f"[{label}] Cleaning up...")
-        tmp_html.unlink(missing_ok=True)
-
+        print("[5/5] Cleaning up...")
         print(f"\n[Done] {filepath.name}")
         print(f"       {filepath}")
 
     except Exception as exc:
-        # Clean up temp file on failure
-        tmp_html.unlink(missing_ok=True)
         print(f"\n[Error] {exc}")
         sys.exit(1)
+    finally:
+        tmp_html.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

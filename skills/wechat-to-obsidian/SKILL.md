@@ -7,19 +7,22 @@ description: >
   Markdown, and writes it to the vault. Also triggered by phrases like "save this
   WeChat article", "export to Obsidian", "微信公众号保存", "微信文章导出",
   "wechat to obsidian", "微信转Obsidian".
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Save WeChat Articles to Obsidian
 
 Download a WeChat official account article and save it as a Markdown note in an
-Obsidian vault. A single command handles download, extraction, conversion, and
-cleanup. Optionally auto-syncs to a Git remote.
+Obsidian vault. A single command handles download, extraction, image
+localization, conversion, and cleanup. Optionally auto-syncs to a Git remote.
 
 ## Quick Start
 
 ```bash
 python scripts/save_wechat.py "https://mp.weixin.qq.com/s/xxxxx"
+
+# Keep images as remote URLs instead of downloading them
+python scripts/save_wechat.py --no-local-images "https://mp.weixin.qq.com/s/xxxxx"
 
 # With Git auto-sync (commit + push after saving)
 python scripts/save_wechat.py --git-sync "https://mp.weixin.qq.com/s/xxxxx"
@@ -41,9 +44,10 @@ See `references/configuration.md` for detailed setup instructions.
 2. Extracts title, account name, and publish date from the page metadata
 3. Extracts the article body using **JsContentExtractor** (HTMLParser depth tracking — see [Why not regex?](#why-not-regex))
 4. Converts the body HTML to Markdown (preserves images, links, headings, code blocks, lists)
-5. Writes a `.md` file with Obsidian frontmatter to the vault inbox
-6. Optionally commits and pushes to a Git remote (`--git-sync`)
-7. Removes temporary files
+5. Localizes WeChat images by default — downloads them into the vault attachments folder and rewrites the references (see [Image Localization](#image-localization))
+6. Writes a `.md` file with Obsidian frontmatter to the vault inbox
+7. Optionally commits and pushes to a Git remote (`--git-sync`)
+8. Removes temporary files
 
 ### Why not regex?
 
@@ -79,7 +83,39 @@ tags:
 
 Content in Markdown...
 
-![](image-url)
+![](../attachments/2026-05-25-Article-Title-img1.jpg)
+```
+
+## Image Localization
+
+By default, WeChat CDN images (`mmbiz.qpic.cn`) are downloaded into the vault
+and the note references the local copies. This matters because WeChat applies
+hotlink protection — remote `mmbiz.qpic.cn` URLs may not display in Obsidian
+or may expire over time.
+
+- **Where images go**: `<vault-root>/attachments/` when an Obsidian vault root
+  (`.obsidian` directory) is found by walking up from the inbox; otherwise
+  `<inbox>/attachments/`.
+- **Naming**: `<date>-<title>-img<N>.<ext>` — one file per unique image, with
+  the extension guessed from the `wx_fmt` query parameter.
+- **Failure handling**: an image that fails to download keeps its remote URL,
+  so the note is still complete. Re-running the same article skips images that
+  already exist on disk (cache).
+- **Opt out**: pass `--no-local-images` to keep all image URLs remote.
+
+## Non-Interactive Mode
+
+Agents and CI run the script without a terminal. The script detects this
+automatically (stdin is not a TTY) and never blocks on `input()`: if the vault
+path is not configured it prints the three configuration options and exits
+with code 1. `--non-interactive` forces the same behavior explicitly.
+
+```bash
+# In an agent shell with nothing configured: fails cleanly, no prompt
+python scripts/save_wechat.py "https://mp.weixin.qq.com/s/xxxxx"   # exit 1
+
+# Configure first, then it just works
+python scripts/save_wechat.py --vault-path "D:/MyVault/Inbox" "https://mp.weixin.qq.com/s/xxxxx"
 ```
 
 ## Git Auto-Sync
@@ -142,8 +178,9 @@ instructions.
 
 ## Limitations
 
-- **Images**: WeChat image URLs (mmbiz.qpic.cn) are preserved as remote links;
-  images may not display outside WeChat due to hotlink protection.
+- **Images**: WeChat images are localized by default (see
+  [Image Localization](#image-localization)); images that fail to download
+  keep their remote URLs and may not display due to hotlink protection.
 - **Video/audio**: Embedded media is not extracted.
 - **Rich formatting**: Complex CSS layouts may be simplified.
 - **Paywalled articles**: Only publicly accessible portions are captured.
@@ -161,7 +198,19 @@ instructions.
 | "下载内容过小" | WeChat anti-scraping | Retry once; the second attempt usually succeeds |
 | Empty body | js_content div attributes span lines | Script uses HTMLParser; if still empty, check page source |
 | Garbled title | HTML entities | `html.unescape()` is applied automatically |
+| Image shows as remote URL | Download failed (kept remote by design) | Re-run the same command — existing images are cached, only failures retry |
+| Images not downloading | Network or CDN issue | Check connectivity; pass `--no-local-images` to skip |
+| Exit 1 with config options printed | No vault path set and stdin is not a TTY | Set `OBSIDIAN_VAULT_INBOX`, `--vault-path`, or the config file |
 | Python not found | Missing install | Install Python 3.8+ from python.org |
 | curl not found | Missing tool | Install curl via your OS package manager |
 | Git push fails (--git-sync) | No credentials | Set up GitHub PAT in remote URL or use SSH |
 | Merge conflict (--git-sync) | Concurrent edits on other devices | Resolve manually, then re-run with `--git-sync` |
+
+## Development
+
+Run the test suite (no network needed — a local HTTP server stands in for
+WeChat):
+
+```bash
+python -m unittest discover -s tests -v
+```

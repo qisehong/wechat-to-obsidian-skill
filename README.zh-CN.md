@@ -107,7 +107,35 @@ tags:
 
 正文内容（已转换为 Markdown）...
 
-![](图片链接)
+![](../attachments/2026-05-25-文章标题-img1.jpg)
+```
+
+## 图片本地化
+
+微信图片默认自动下载到 vault 附件目录，笔记中引用本地副本。这解决了微信
+防盗链导致的远程图片无法在 Obsidian 中显示、或随时间失效的问题。
+
+- **保存位置**：从 Inbox 向上查找 Obsidian vault 根目录（含 `.obsidian`
+  文件夹），图片存入 `<vault根目录>/attachments/`；找不到则存入
+  `<Inbox>/attachments/`。
+- **命名规则**：`日期-标题-imgN.扩展名`，按首次出现顺序编号，扩展名取自
+  `wx_fmt` 参数。
+- **失败处理**：下载失败的图片保留远程链接，笔记依然完整；重复运行同一篇
+  文章时，已存在的图片自动跳过（缓存）。
+- **关闭本地化**：传入 `--no-local-images` 即可保留全部远程链接。
+
+## 非交互模式
+
+智能体和 CI 环境没有终端输入。脚本会自动检测（stdin 非 TTY）并绝不阻塞在
+`input()` 上：若 vault 路径未配置，则打印三种配置方式并以退出码 1 结束。
+也可用 `--non-interactive` 显式指定该行为。
+
+```bash
+# 在智能体 shell 中且未配置：干净地报错退出，不会挂起等待输入
+python scripts/save_wechat.py "https://mp.weixin.qq.com/s/xxxxx"   # exit 1
+
+# 先配置好路径即可正常使用
+python scripts/save_wechat.py --vault-path "D:/我的笔记库/Inbox" "https://mp.weixin.qq.com/s/xxxxx"
 ```
 
 ## 配置方式
@@ -152,6 +180,8 @@ tags:
 | "下载内容过小" | 微信反爬机制 | 重试一次即可 |
 | 正文为空 | 微信页面结构变化 | 请带上文章链接提交 issue |
 | 标题乱码 | HTML 实体 | `html.unescape()` 已自动处理 |
+| 图片保留远程链接 | 该图下载失败（设计行为） | 重跑同一命令即可，已下载的图片自动跳过 |
+| 退出码 1 并提示配置方式 | 未配置 vault 且 stdin 非 TTY | 设置 `OBSIDIAN_VAULT_INBOX`、`--vault-path` 或配置文件 |
 | Python 未找到 | 未安装 Python | 从 [python.org](https://python.org) 安装 Python 3.8+ |
 | curl 未找到 | 缺少工具 | `brew install curl` / `apt install curl` / `winget install curl` |
 | Windows 乱码 | 编码问题 | 使用 Python 3.8+（正确支持 UTF-8），输出文件不乱码 |
@@ -171,11 +201,13 @@ tags:
          │
     [4] HTML → Markdown 转换
          │
-    [5] 写入 Obsidian vault Inbox
+    [5] 下载微信图片到 vault 附件目录，改写为本地引用
+         │
+    [6] 写入 Obsidian vault Inbox
          │
 ┌──────────────────┐
-│  📄 YYYY-MM-DD-   │  ← Obsidian 中可直接打开
-│     标题.md        │
+│  📄 YYYY-MM-DD-   │  ← Obsidian 中可直接打开，
+│     标题.md        │    图片离线可用
 └──────────────────┘
 ```
 

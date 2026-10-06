@@ -101,6 +101,37 @@ tags:
 # AI Tools Comparison 2026
 
 Article content in Markdown...
+
+![](../attachments/2026-05-25-AI-Tools-Comparison-2026-img1.jpg)
+```
+
+## Image Localization
+
+WeChat images are downloaded into the vault by default and the note references
+the local copies. This fixes the WeChat hotlink protection that makes remote
+`mmbiz.qpic.cn` URLs unreliable in Obsidian (broken display, expired links).
+
+- **Where**: `<vault-root>/attachments/` (found by walking up from the inbox
+  to the `.obsidian` directory), or `<inbox>/attachments/` as a fallback.
+- **Naming**: `<date>-<title>-imgN.<ext>`, numbered by first appearance, with
+  the extension taken from the `wx_fmt` query parameter.
+- **Failure handling**: images that fail to download keep their remote URL;
+  re-running the same article skips images already on disk (cache).
+- **Opt out**: pass `--no-local-images` to keep all image URLs remote.
+
+## Non-Interactive Mode
+
+Agents and CI have no terminal. The script detects this automatically (stdin
+is not a TTY) and never blocks on `input()`: without a configured vault path
+it prints the three configuration options and exits with code 1.
+`--non-interactive` forces the same behavior explicitly.
+
+```bash
+# Agent shell with nothing configured: fails cleanly, no prompt
+python scripts/save_wechat.py "https://mp.weixin.qq.com/s/xxxxx"   # exit 1
+
+# Configure the path first and it just works
+python scripts/save_wechat.py --vault-path "D:/MyVault/Inbox" "https://mp.weixin.qq.com/s/xxxxx"
 ```
 
 ## Configuration Methods
@@ -147,6 +178,8 @@ To skip the permission prompt when the agent runs this script, add to your
 | Python not found | Install Python 3.8+ from [python.org](https://python.org) |
 | curl not found | `brew install curl` / `apt install curl` / `winget install curl` |
 | Empty body | Report the issue with the article URL |
+| Image kept as remote URL | That download failed (by design) — re-run; cached images are skipped |
+| Exit 1 with config options printed | No vault path set and stdin is not a TTY — set `OBSIDIAN_VAULT_INBOX`, `--vault-path`, or the config file |
 | Encoding errors on Windows | Use Python 3.8+ (handles UTF-8 correctly) |
 
 ## License
